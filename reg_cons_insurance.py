@@ -749,6 +749,93 @@ def insurance(m,sample,shock_type='permanent',shock_gender='Male',consumption_ge
     # Total private consumption insurance
     ind_con_ins=1-ols(SHOCK,ΔCONS,sm,cov=CONTROLS,take=1)
 
+    ### B2 bargaining-channel diagnostics (mechanism dashboard). Five
+    # ingredients per shock (see experiments' printout):
+    #  K6        outcome: per-unit smoothing rate κ_C/κ_ynet, composition-free
+    #  κ_dp      trigger: SHOCK -> Δ(bargaining weight) pass-through
+    #  κ_pc      realized-rebargaining contribution to κ_C: cell-level
+    #            PC = (dlogC/dp from the SOLVED policy at the cell's t+1
+    #            state, at PRE-move power) x realized Δp, regressed on the
+    #            SHOCK with the same controls. Exact: κ_C = κ_pc + κ_rest.
+    #            (divide by kappa_ynet for K6 units)
+    #  K6|p-lo/hi state dependence: K6 within bottom/top tercile of the
+    #            PRE-shock power p_lag (direct ratio ols(ΔC)/ols(ΔY_net))
+    #  p̄         where the population sits on the κ(p) schedule
+    Δpw  = m.sim.power[sample1]-m.sim.power_lag[sample1]
+    κ_dp = ols(SHOCK,Δpw,sm,cov=CONTROLS,take=1)
+    _pn  = m.sim.power[sample1][sm]; _pl = m.sim.power_lag[sample1][sm]
+    f_up = (_pn>_pl).mean(); f_dn = (_pn<_pl).mean()
+
+    # κ_pc: policy slope dlogC/dp at each cell's t+1 state (bilinear in
+    # (power,A), finite difference eps=0.05), times the realized power move
+    _TT   = np.broadcast_to(np.arange(par.T)[None,:],(par.simN,par.T))
+    _pol  = m.sol.i_C_tot_remain_couple
+    _gp   = par.grid_power; _gA = par.grid_A
+    _t_c  = _TT[sample1]
+    _wlp  = np.clip(m.sim.WLP[sample1],0,_pol.shape[1]-1)
+    _ihc  = np.clip(m.sim.ih[sample1],0,_pol.shape[2]-1)
+    _izc  = np.clip(m.sim.iz[sample1],0,_pol.shape[3]-1)
+    _iLc  = np.clip(m.sim.love[sample1],0,_pol.shape[5]-1)
+    _Ac   = m.sim.A[sample1].astype(float)
+    _plag = m.sim.power_lag[sample1].astype(float)     # PRE-move weight
+    _jA   = np.clip(np.searchsorted(_gA,_Ac)-1,0,len(_gA)-2)
+    _wA   = np.clip((_Ac-_gA[_jA])/(_gA[_jA+1]-_gA[_jA]),0.0,1.0)
+    def _C_at(pv):
+        jp = np.clip(np.searchsorted(_gp,pv)-1,0,len(_gp)-2)
+        wp = np.clip((pv-_gp[jp])/(_gp[jp+1]-_gp[jp]),0.0,1.0)
+        def g_(a,bb): return _pol[_t_c,_wlp,_ihc,_izc,a,_iLc,bb]
+        return ((1-wp)*(1-_wA)*g_(jp,_jA)+(1-wp)*_wA*g_(jp,_jA+1)
+                +wp*(1-_wA)*g_(jp+1,_jA)+wp*_wA*g_(jp+1,_jA+1))
+    _eps = 0.05
+    _plo = np.clip(_plag-_eps/2,_gp[0],_gp[-1]-_eps)
+    _C1,_C2 = _C_at(_plo),_C_at(_plo+_eps)
+    _gcell  = (_C2-_C1)/(_eps*np.maximum(_C1,1e-12))   # dlogC/dp at the cell
+    κ_pc = ols(SHOCK,_gcell*Δpw,sm,cov=CONTROLS,take=1)
+
+    # FROZEN-POWER counterfactual (same model, same policy): evaluate the
+    # policy along the simulated states with power pinned at the couple's
+    # initial value, at both t and t+1, and regress the counterfactual
+    # consumption growth on the SHOCK. kappa_C - kC_froz = total bargaining
+    # role in the pass-through (realized + accumulated power history).
+    _t_0  = _TT[sample]
+    _wlp0 = np.clip(m.sim.WLP[sample],0,_pol.shape[1]-1)
+    _ih0  = np.clip(m.sim.ih[sample],0,_pol.shape[2]-1)
+    _iz0  = np.clip(m.sim.iz[sample],0,_pol.shape[3]-1)
+    _iL0  = np.clip(m.sim.love[sample],0,_pol.shape[5]-1)
+    _A0   = m.sim.A[sample].astype(float)
+    _jA0  = np.clip(np.searchsorted(_gA,_A0)-1,0,len(_gA)-2)
+    _wA0  = np.clip((_A0-_gA[_jA0])/(_gA[_jA0+1]-_gA[_jA0]),0.0,1.0)
+    def _C_at0(pv):
+        jp = np.clip(np.searchsorted(_gp,pv)-1,0,len(_gp)-2)
+        wp = np.clip((pv-_gp[jp])/(_gp[jp+1]-_gp[jp]),0.0,1.0)
+        def g_(a,bb): return _pol[_t_0,_wlp0,_ih0,_iz0,a,_iL0,bb]
+        return ((1-wp)*(1-_wA0)*g_(jp,_jA0)+(1-wp)*_wA0*g_(jp,_jA0+1)
+                +wp*(1-_wA0)*g_(jp+1,_jA0)+wp*_wA0*g_(jp+1,_jA0+1))
+    _P0   = np.broadcast_to(m.sim.init_power[:,None],(par.simN,par.T)).astype(float)
+    _p0_1 = np.clip(_P0[sample1],_gp[0],_gp[-1])
+    _p0_0 = np.clip(_P0[sample], _gp[0],_gp[-1])
+    ΔC_froz = np.log(np.maximum(_C_at(_p0_1),1e-12)
+                     /np.maximum(_C_at0(_p0_0),1e-12))
+    kC_froz = ols(SHOCK,ΔC_froz,sm,cov=CONTROLS,take=1)
+
+    # conditional K6 by tercile of the PRE-shock power (predetermined w.r.t.
+    # the shock); direct ratio within each tercile
+    _plfull = m.sim.power_lag[sample1]
+    _q1,_q2 = np.quantile(_plfull[sm],[1/3,2/3])
+    _mlo = sm & (_plfull<=_q1); _mhi = sm & (_plfull>=_q2)
+    kC_plow  = ols(SHOCK,ΔC,_mlo,cov=CONTROLS,take=1)
+    kC_phigh = ols(SHOCK,ΔC,_mhi,cov=CONTROLS,take=1)
+    kYn_plow  = ols(SHOCK,ΔY_net,_mlo,cov=CONTROLS,take=1)
+    kYn_phigh = ols(SHOCK,ΔY_net,_mhi,cov=CONTROLS,take=1)
+    K6_plow  = kC_plow/kYn_plow
+    K6_phigh = kC_phigh/kYn_phigh
+    # wife participation rate (at t) within each power tercile: participation
+    # status varies with power (the wlp switch), so the added-worker margin --
+    # and hence the DENOMINATOR of K6 -- is state-dependent by construction
+    wlp_plow  = (m.sim.WLP[sample][_mlo]>0).mean()
+    wlp_phigh = (m.sim.WLP[sample][_mhi]>0).mean()
+    p_bar = _pl.mean()
+
     ### C Provide a latex code line with results
     
     # Clean the raw strings
@@ -766,7 +853,20 @@ def insurance(m,sample,shock_type='permanent',shock_gender='Male',consumption_ge
               'HH_insurance':HH_insurance,
               'private_shift':private_shift,
               'bargaining_shift':bargaining_shift,
-              'ind_con_ins':ind_con_ins}
+              'ind_con_ins':ind_con_ins,
+              'kappa_dp':κ_dp,               # SHOCK -> Δpower pass-through
+              'kappa_C':K1*K2*K3*K4*K5*K6,   # SHOCK -> hh consumption pass-through
+              'kappa_ynet':K1*K2*K3*K4*K5,   # SHOCK -> hh disposable income
+              'K6':K6,                       # per-unit smoothing κ_C/κ_ynet
+              'kappa_pc':κ_pc,               # realized power-move part of κ_C
+              'kC_froz':kC_froz,             # κ_C, policy at frozen initial power
+              'K6_plow':K6_plow,             # K6 | bottom tercile of pre-shock power
+              'K6_phigh':K6_phigh,           # K6 | top tercile of pre-shock power
+              'kC_plow':kC_plow,'kC_phigh':kC_phigh,     # its numerator by tercile
+              'kYn_plow':kYn_plow,'kYn_phigh':kYn_phigh, # its denominator by tercile
+              'wlp_plow':wlp_plow,'wlp_phigh':wlp_phigh, # wife participation by tercile
+              'p_bar':p_bar,                 # mean pre-shock power (married sample)
+              'f_up':f_up,'f_dn':f_dn}       # reneg freq toward wife/husband
     
   
 
@@ -775,7 +875,8 @@ def insurance(m,sample,shock_type='permanent',shock_gender='Male',consumption_ge
             'vardec_w':vardec_wife,'vardec_m':vardec_husband,
             'shockdec':shockdec,'vol_ladder':vol_ladder}
 
-def vol_stack_figure(models, samples, labels, name_file, mode='3seg'):
+def vol_stack_figure(models, samples, labels, name_file, mode='3seg',
+                     legend='panel'):
     """
     Stacked-bar figure of private-consumption volatility for a list of model
     versions (e.g. the policy variants of an experiment). Bars are GROUPED BY
@@ -794,6 +895,11 @@ def vol_stack_figure(models, samples, labels, name_file, mode='3seg'):
                 [V_cg*V_C/(V_C+V_s) | V_cg*V_s/(V_C+V_s)]
 
     Saved to root+'/Output files/model/'+name_file+'.eps'.
+
+    legend: 'panel' draws the legend inside the axes (top left, default);
+    'external' draws NO legend in the panel and instead saves a standalone,
+    panel-sized legend figure to .../model/volbars_legend.eps, meant to
+    occupy the empty 4th slot of a 2x2 LaTeX subfigure arrangement.
     """
     col_C, col_s, col_cov = '#fdae6b', '#6baed6', '#bdbdbd'
 
@@ -853,7 +959,7 @@ def vol_stack_figure(models, samples, labels, name_file, mode='3seg'):
                                        fill=False, edgecolor='black',
                                        linewidth=1.4, zorder=3))
             xs_all.append(x); ticklabs.append(lab)
-        ax.text(j*(n+0.8) + (n-1)/2, -0.30,
+        ax.text(j*(n+0.8) + (n-1)/2, -0.46,
                 'Wife ($c^w$)' if g == 'w' else 'Husband ($c^m$)',
                 ha='center', va='top', fontsize=12,
                 transform=ax.get_xaxis_transform())
@@ -861,7 +967,7 @@ def vol_stack_figure(models, samples, labels, name_file, mode='3seg'):
     ax.set_xticklabels(ticklabs, fontsize=10, rotation=30, ha='right')
     ax.tick_params(axis='y', labelsize=10)
     ax.set_ylabel(r'Volatility ($\times 100$)', fontsize=12)
-    ax.set_ylim(-0.2, 0.9)                   # common scale across experiments
+    ax.set_ylim(-0.2, 0.7)                   # common scale across experiments
     ax.axhline(0.0, color='0.4', linewidth=0.8)
     ax.grid(True, axis='y', linewidth=0.4, alpha=0.35); ax.set_axisbelow(True)
     # explicit legend (top left), one entry per volatility object with symbol
@@ -873,13 +979,28 @@ def vol_stack_figure(models, samples, labels, name_file, mode='3seg'):
         handles += [Patch(facecolor=col_cov, edgecolor='white', label=lab_cv),
                     _Rect((0, 0), 1, 1, fill=False, edgecolor='black',
                           linewidth=1.4, label=lab_T)]
-    ax.legend(handles=handles, loc='upper left', frameon=False, fontsize=9.5,
-              ncol=2, columnspacing=1.0, handlelength=1.4,
-              handletextpad=0.5)             # two rows (2x2) for legibility
+    if legend == 'panel':
+        ax.legend(handles=handles, loc='upper left', frameon=False, fontsize=9.5,
+                  ncol=2, columnspacing=1.0, handlelength=1.4,
+                  handletextpad=0.5)         # two rows (2x2) for legibility
     fig.tight_layout()
     fig.savefig(root+'/Output files/model/'+name_file+'.eps',
                 format='eps', bbox_inches='tight')
     plt.show()
+
+    if legend == 'external':
+        # standalone legend figure, same size as a panel, to fill the empty
+        # 4th slot of a 2x2 subfigure arrangement (identical across the
+        # experiments, so overwriting it from each one is harmless)
+        figL, axL = plt.subplots(figsize=(0.9+0.65*2*n, 3.6))
+        axL.axis('off')
+        axL.legend(handles=handles, loc='center', bbox_to_anchor=(0.5, 0.62),
+                   frameon=False, fontsize=13,
+                   ncol=1, handlelength=1.6, handletextpad=0.7,
+                   labelspacing=1.1, borderaxespad=0.0)
+        figL.savefig(root+'/Output files/model/volbars_legend.eps',
+                     format='eps')           # NO tight bbox: keep panel size
+        plt.show()
 
 
 def share_var_decomposition(models, samples, labels):

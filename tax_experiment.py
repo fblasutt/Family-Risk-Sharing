@@ -98,7 +98,7 @@ age_policy=np.array(np.where(policy[:,None]==calendar_year)[1],dtype=np.int32)
 ############################################################################
 
 #Tax progressivity parameters to consider
-gridτ=np.linspace(model.par.τ,0.3,3)
+gridτ=np.linspace(model.par.τ,0.26,3)
 
 #List that contains model information (LC only)
 Bmodel=list()
@@ -147,7 +147,7 @@ def budget(x,i):
     return ((discounting*m.sim.tax)[(age>=age_initial[:,None])]).sum()-taxes_baseline
 
 #Find the level of Λ so that goivernment surplus is the same than at baseline
-gridΛ=np.array([optimize.bisect(budget,0.87,1.03,args=(i,),xtol=0.001) for i in range(1,len(gridτ))])
+gridΛ=np.array([optimize.bisect(budget,0.82,1.05,args=(i,),xtol=0.001) for i in range(1,len(gridτ))])
 gridΛ=np.append(M.par.Λ,gridΛ)
 #array([0.92    , 0.946875, 0.964375])
 ############################################################################
@@ -224,7 +224,7 @@ for i in range(len(gridτ)):
 # Private-consumption volatility figure: one stacked bar per variant x
 # spouse (household part + share component + 2Cov; raw variances)
 ########################################
-vol_stack_figure(Bmodel, samples, Names_line, 'volbars_tax')
+vol_stack_figure(Bmodel, samples, Names_line, 'volbars_tax', legend='external')
 
 
 # sh_perm=np.array([Bgrid[i]['w_sh']['per_m'] for i in range(len(gridτ))])
@@ -267,3 +267,24 @@ vol_stack_figure(Bmodel, samples, Names_line, 'volbars_tax')
 share_var_decomposition(Bmodel, samples, Names_line)
 
 
+
+
+#########################################
+# Bargaining-channel mechanism check (see red note): per variant and shock
+# gender, the shock->power pass-through kappa_dp, the consumption and
+# disposable-income pass-throughs whose RATIO defines self-insurance, the
+# Self_insurance component itself, and reneg direction frequencies.
+# CLAIM: kappa_dp<0 for male shocks, >0 for female; with dC/dp<0 this
+# inflates kappa_C for male shocks (Self falls) and dampens it for female
+# (Self rises); the distortion grows with renegotiation frequency/size.
+########################################
+print()
+print('=== Bargaining-channel mechanism check ===')
+print(f"{'variant':18s} {'shock':>6s} {'kappa_dp':>9s} {'kappa_C':>8s} "
+      f"{'kappa_yn':>9s} {'Self':>7s} {'f_up':>7s} {'f_dn':>7s}")
+for i in range(len(gridτ)):
+    for lab, grid in (('male', Bgrid), ('female', Bwgrid)):
+        d = grid[i]['ins_dec']
+        print(f"{Names_line[i]:18s} {lab:>6s} {d['kappa_dp']:9.4f} "
+              f"{d['kappa_C']:8.4f} {d['kappa_ynet']:9.4f} "
+              f"{d['Self_insurance']:7.3f} {d['f_up']:7.4f} {d['f_dn']:7.4f}")

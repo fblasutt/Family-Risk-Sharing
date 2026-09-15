@@ -186,7 +186,7 @@ for i in range(len(gridτ)):
 # Private-consumption volatility figure: one stacked bar per variant x
 # spouse (household part + share component + 2Cov; raw variances)
 ########################################
-vol_stack_figure(Bmodel, samples, Names_line, 'volbars_gwg')
+vol_stack_figure(Bmodel, samples, Names_line, 'volbars_gwg', legend='external')
 
 
 # sh_perm=np.array([Bgrid[i]['w_sh']['per_m'] for i in range(len(gridτ))])
@@ -252,3 +252,40 @@ for i,m in enumerate(Bmodel):
 
 # Size-vs-level decomposition of share-growth variance (both spouses)
 share_var_decomposition(Bmodel, samples, Names_line)
+
+
+#########################################
+# Mechanism dashboard, per (variant x shock gender).
+#  K6         outcome: per-unit smoothing rate kappa_C/kappa_ynet
+#  kappa_dp   trigger: shock -> Delta(bargaining weight)
+#  kC_sim     shock -> hh consumption pass-through, simulated data
+#  kC_froz    same, with the SAME policy evaluated at power frozen at the
+#             couple's initial value: kC_sim - kC_froz = bargaining role
+#  K6|p-lo/hi state dependence: K6 within bottom/top tercile of PRE-shock power
+#  p_bar      mean pre-shock power (where the population sits on K6(p))
+# The anatomy table splits the conditional K6 into numerator (kC) and
+# denominator (kYn) and reports the wife's participation rate by tercile:
+# K6-by-power differences can come from consumption behavior (kC) or from
+# the added-worker margin in disposable income (kYn, tied to wlp status).
+########################################
+print()
+print('=== Mechanism dashboard ===')
+print(f"{'variant':18s} {'shock':>6s} | {'K6':>7s} {'kappa_dp':>9s} | {'kC_sim':>7s} "
+      f"{'kC_froz':>8s} | {'K6|p-lo':>8s} {'K6|p-hi':>8s} | {'p_bar':>6s}")
+for i in range(len(gridτ)):
+    for lab, grid in (('male', Bgrid), ('female', Bwgrid)):
+        d = grid[i]['ins_dec']
+        print(f"{Names_line[i]:18s} {lab:>6s} | {d['K6']:7.4f} {d['kappa_dp']:9.4f} | "
+              f"{d['kappa_C']:7.4f} {d['kC_froz']:8.4f} | "
+              f"{d['K6_plow']:8.4f} {d['K6_phigh']:8.4f} | {d['p_bar']:6.3f}")
+print()
+print('=== Anatomy of K6 by pre-shock power tercile ===')
+print(f"{'variant':18s} {'shock':>6s} | {'kC|lo':>7s} {'kYn|lo':>7s} {'K6|lo':>7s} "
+      f"{'wlp%|lo':>8s} | {'kC|hi':>7s} {'kYn|hi':>7s} {'K6|hi':>7s} {'wlp%|hi':>8s}")
+for i in range(len(gridτ)):
+    for lab, grid in (('male', Bgrid), ('female', Bwgrid)):
+        d = grid[i]['ins_dec']
+        print(f"{Names_line[i]:18s} {lab:>6s} | {d['kC_plow']:7.4f} {d['kYn_plow']:7.4f} "
+              f"{d['K6_plow']:7.4f} {100*d['wlp_plow']:7.1f}% | "
+              f"{d['kC_phigh']:7.4f} {d['kYn_phigh']:7.4f} "
+              f"{d['K6_phigh']:7.4f} {100*d['wlp_phigh']:7.1f}%")
